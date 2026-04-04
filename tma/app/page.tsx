@@ -28,13 +28,15 @@ export default function AutoFlowTMA() {
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   // Telegram Mini App init
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-      window.Telegram.WebApp.ready();
-      window.Telegram.WebApp.expand();
-      window.Telegram.WebApp.setHeaderColor('#111827');
-    }
-  }, []);
+  // Telegram Mini App init
+useEffect(() => {
+  if (typeof window !== 'undefined' && (window as any).Telegram?.WebApp) {
+    const tg = (window as any).Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor('#111827');
+  }
+}, []);
 
   const fetchListings = async () => {
     const { data } = await supabase
