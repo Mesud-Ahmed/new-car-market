@@ -28,35 +28,45 @@ export default function AutoFlowTMA() {
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   // Telegram Mini App init
-  // Telegram Mini App init
-useEffect(() => {
-  if (typeof window !== 'undefined' && (window as any).Telegram?.WebApp) {
-    const tg = (window as any).Telegram.WebApp;
-    tg.ready();
-    tg.expand();
-    tg.setHeaderColor('#111827');
-  }
-}, []);
+  useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).Telegram?.WebApp) {
+      const tg = (window as any).Telegram.WebApp;
+      tg.ready();
+      tg.expand();
+      tg.setHeaderColor('#111827');
+    }
+  }, []);
 
+  // Fetch listings
   const fetchListings = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('listings')
       .select('*')
       .eq('status', 'posted')
       .order('created_at', { ascending: false });
+
+    if (error) console.error('Error fetching listings:', error);
     setListings(data || []);
     setLoading(false);
   };
 
+  // Real-time subscription + initial fetch
   useEffect(() => {
     fetchListings();
 
     const channel = supabase
       .channel('listings-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'listings' }, fetchListings)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'listings' },
+        fetchListings
+      )
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    // Proper cleanup
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredListings = listings.filter((car) => {
