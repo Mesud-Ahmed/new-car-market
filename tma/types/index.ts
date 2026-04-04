@@ -1,0 +1,1 @@
+export type { CarListing, ListingStatus } from '../../backend/src/types';
