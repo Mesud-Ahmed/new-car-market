@@ -7,7 +7,7 @@ import { pendingListings } from './types';
 const bot = new Bot(process.env.BOT_TOKEN!);
 const CHANNEL_ID = Number(process.env.CHANNEL_ID!);
 
-const TMA_URL = 'https://new-car-market-vl8v.vercel.app/';   // ← Your deployed TMA
+const TMA_URL = 'https://new-car-market-plum.vercel.app/';   // ← Your deployed TMA
 
 bot.command('start', (ctx) => {
   ctx.reply(

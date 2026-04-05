@@ -18,7 +18,7 @@ interface CarListing {
   formatted_post?: string;
 }
 
-const ADMIN_USER_ID = 5040963728; // ← CHANGE THIS TO YOUR REAL TELEGRAM USER ID
+const ADMIN_USER_ID = 5040963728; 
 
 export default function AutoFlowTMA() {
   const [activeTab, setActiveTab] = useState<'buyer' | 'admin'>('buyer');
@@ -30,17 +30,23 @@ export default function AutoFlowTMA() {
   const [isAdmin, setIsAdmin] = useState(false);
 
   // Telegram Mini App initialization
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-      const webApp = window.Telegram.WebApp;
-      webApp.ready();
-      webApp.expand();
-      webApp.setHeaderColor('#111827');
+useEffect(() => {
+    if (typeof window === 'undefined' || !window.Telegram?.WebApp) return;
 
+    const webApp = window.Telegram.WebApp;
+
+    webApp.ready();
+    webApp.expand();
+    webApp.setHeaderColor('#111827');
+
+    // Small delay to ensure initDataUnsafe is populated
+    setTimeout(() => {
       if (webApp.initDataUnsafe?.user?.id === ADMIN_USER_ID) {
         setIsAdmin(true);
+        // Auto switch to admin tab for you
+        setActiveTab('admin');
       }
-    }
+    }, 300);
   }, []);
 
   const fetchListings = async () => {
