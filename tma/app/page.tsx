@@ -37,7 +37,6 @@ export default function AutoFlowTMA() {
       webApp.expand();
       webApp.setHeaderColor('#111827');
 
-      // Check if current user is admin
       if (webApp.initDataUnsafe?.user?.id === ADMIN_USER_ID) {
         setIsAdmin(true);
       }
@@ -54,6 +53,7 @@ export default function AutoFlowTMA() {
     setLoading(false);
   };
 
+  // Real-time subscription (fixed cleanup)
   useEffect(() => {
     fetchListings();
 
@@ -62,7 +62,10 @@ export default function AutoFlowTMA() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'listings' }, fetchListings)
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    // Cleanup must be synchronous
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredListings = listings.filter((car) => {
@@ -125,7 +128,7 @@ export default function AutoFlowTMA() {
         </div>
       </div>
 
-      {/* BUYER VIEW - Beautiful Carousel */}
+      {/* BUYER VIEW */}
       {activeTab === 'buyer' && (
         <div className="p-4 max-w-2xl mx-auto">
           <div className="flex items-center gap-3 mb-6">
@@ -173,7 +176,6 @@ export default function AutoFlowTMA() {
           <div className="space-y-6">
             {filteredListings.map((car) => (
               <div key={car.id} className="bg-gray-900 rounded-3xl overflow-hidden">
-                {/* 4-image carousel */}
                 <div className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide">
                   {car.photos?.slice(0, 4).map((photo, index) => (
                     <img
@@ -213,7 +215,7 @@ export default function AutoFlowTMA() {
         </div>
       )}
 
-      {/* ADMIN VIEW - Only visible to you */}
+      {/* ADMIN VIEW */}
       {activeTab === 'admin' && isAdmin && (
         <div className="p-4 max-w-2xl mx-auto">
           <div className="flex items-center gap-3 mb-6">
