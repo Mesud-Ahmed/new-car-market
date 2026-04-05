@@ -1,55 +1,51 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '../../../lib/supabase';
+import { getListingById, updateListingById } from '@/lib/server/listings';
+import { extractListingId, jsonError, parseJsonBody } from '@/lib/server/http';
+import { deleteChannelMessage, sendListingMediaGroup } from '@/lib/server/telegram';
+import { isAuthorizedAdminRequest } from '@/lib/server/auth';
 
-const BOT_TOKEN = process.env.BOT_TOKEN!;
-const CHANNEL_ID = Number(process.env.CHANNEL_ID!);
-
-export async function POST(req: Request) {
-  const { listingId } = await req.json();
-
-  const { data: listing } = await supabase
-    .from('listings')
-    .select('*')
-    .eq('id', listingId)
-    .single();
-
-  if (!listing || !listing.photos) {
-    return NextResponse.json({ error: 'Listing not found' }, { status: 404 });
+export async function POST(request: Request) {
+  if (!isAuthorizedAdminRequest(request)) {
+    return jsonError('Unauthorized', 403);
   }
 
-  // Delete old message
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: CHANNEL_ID,
-      message_id: Number(listing.telegram_message_id),
-    }),
-  });
+  try {
+    const payload = await parseJsonBody(request);
+    const listingId = extractListingId(payload);
+    if (!listingId) {
+      return jsonError('listingId is required', 400);
+    }
 
-  // Re-post with the original beautiful formatted_post
-  const sent = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMediaGroup`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: CHANNEL_ID,
-      media: listing.photos.map((url: string, i: number) => ({
-        type: 'photo',
-        media: url,
-        caption: i === 0 ? listing.formatted_post : undefined,
-        parse_mode: 'HTML',
-      })),
-    }),
-  });
+    const listing = await getListingById(listingId);
+    const photos = Array.isArray(listing?.photos)
+      ? listing.photos.filter((photo): photo is string => typeof photo === 'string')
+      : [];
 
-  const result = await sent.json();
-  const newMessageId = result.result[0].message_id;
+    if (!listing || photos.length === 0 || !listing.formatted_post || !listing.telegram_message_id) {
+      return jsonError('Listing not found', 404);
+    }
 
-  // Update message_id in DB
-  await supabase
-    .from('listings')
-    .update({ telegram_message_id: newMessageId.toString() })
-    .eq('id', listingId);
+    const previousMessageId = Number(listing.telegram_message_id);
+    if (!Number.isInteger(previousMessageId)) {
+      return jsonError('Listing has invalid telegram message id', 422);
+    }
 
-  return NextResponse.json({ success: true });
+    try {
+      await deleteChannelMessage(previousMessageId);
+    } catch (error) {
+      console.warn('Failed to delete previous message before bumping', error);
+    }
+
+    const sentMessages = await sendListingMediaGroup(photos, listing.formatted_post);
+    const firstMessage = sentMessages[0];
+    if (!firstMessage) {
+      throw new Error('Telegram did not return a new message id');
+    }
+
+    await updateListingById(listingId, { telegram_message_id: firstMessage.message_id.toString() });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Bump route failed', error);
+    return jsonError(error instanceof Error ? error.message : 'Failed to bump listing', 500);
+  }
 }

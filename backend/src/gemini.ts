@@ -1,9 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import dotenv from 'dotenv';
+import { env } from './config';
+import { ExtractedCarDataSchema, type ExtractedCarData } from './validation';
 
-dotenv.config();
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 const SYSTEM_PROMPT = `
@@ -61,10 +60,31 @@ Rules:
 - Keep features clean and readable.
 `;
 
-export const extractCarData = async (text: string): Promise<any> => {
-  const prompt = `${SYSTEM_PROMPT}\n\nDealer’s messy message:\n${text}`;
+function extractJsonPayload(responseText: string): string {
+  const cleaned = responseText.replace(/```json|```/gi, '').trim();
+
+  try {
+    JSON.parse(cleaned);
+    return cleaned;
+  } catch {
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+
+    if (start === -1 || end <= start) {
+      throw new Error('No JSON object found in model response');
+    }
+
+    const candidate = cleaned.slice(start, end + 1);
+    JSON.parse(candidate);
+    return candidate;
+  }
+}
+
+export const extractCarData = async (text: string): Promise<ExtractedCarData> => {
+  const prompt = `${SYSTEM_PROMPT}\n\nDealer's messy message:\n${text}`;
   const result = await model.generateContent(prompt);
   const responseText = result.response.text().trim();
-  const jsonStr = responseText.replace(/```json|```/g, '').trim();
-  return JSON.parse(jsonStr);
+  const jsonStr = extractJsonPayload(responseText);
+  const parsed = JSON.parse(jsonStr);
+  return ExtractedCarDataSchema.parse(parsed);
 };

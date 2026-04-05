@@ -1,3 +1,5 @@
+import type { ExtractedCarData } from './validation';
+
 export type ListingStatus = 'pending' | 'posted' | 'sold';
 
 export interface CarListing {
@@ -16,17 +18,23 @@ export interface CarListing {
   color?: string;
   condition?: string;
   description?: string;
-  photos: string[];                    
-  extracted_data?: any;
+  photos: string[];
+  formatted_post?: string;
+  engine?: string | null;
+  features?: string | null;
+  extracted_data?: Record<string, unknown>;
   created_at?: string;
   updated_at?: string;
 }
 
-// Temporary storage for the new flow
-export const pendingListings = new Map<number, {
+export interface PendingListing {
   userId: number;
   chatId: number;
   rawText: string;
-  extracted: any;
-  photos: string[];           // will be filled after photos arrive
-}>();
+  extracted: ExtractedCarData;
+  photos: string[];
+  createdAt: number;
+}
+
+// Temporary storage for the new flow
+export const pendingListings = new Map<number, PendingListing>();

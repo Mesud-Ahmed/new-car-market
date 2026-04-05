@@ -1,9 +1,12 @@
 import bot from './bot';
 
 async function main() {
-  console.log('🚀 AutoFlow Ethiopia Bot starting...');
+  console.log('AutoFlow Ethiopia Bot starting...');
   await bot.start();
-  console.log('✅ Bot is running! Forward messages to test.');
+  console.log('Bot is running. Forward messages to test.');
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error('Failed to start bot', error);
+  process.exit(1);
+});

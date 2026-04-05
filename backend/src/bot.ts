@@ -1,145 +1,231 @@
 import { Bot, Context, InlineKeyboard } from 'grammy';
-import { supabase } from './supabase';
 import { uploadToCloudinary } from './cloudinary';
+import { env } from './config';
 import { extractCarData } from './gemini';
-import { pendingListings } from './types';
+import { supabase } from './supabase';
+import { pendingListings, type PendingListing } from './types';
 
-const bot = new Bot(process.env.BOT_TOKEN!);
-const CHANNEL_ID = Number(process.env.CHANNEL_ID!);
+const bot = new Bot(env.BOT_TOKEN);
+const CHANNEL_ID = env.CHANNEL_ID;
+const TMA_URL = env.TMA_URL;
+const PENDING_LISTING_TTL_MS = env.PENDING_LISTING_TTL_MS;
 
-const TMA_URL = 'https://new-car-market-plum.vercel.app/';   // ← Your deployed TMA
+const TELEGRAM_FILE_BASE_URL = `https://api.telegram.org/file/bot${env.BOT_TOKEN}`;
 
-bot.command('start', (ctx) => {
-  ctx.reply(
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return 'Unexpected error';
+}
+
+function isExpired(pending: PendingListing): boolean {
+  return Date.now() - pending.createdAt > PENDING_LISTING_TTL_MS;
+}
+
+function getPendingListing(userId: number): PendingListing | undefined {
+  const pending = pendingListings.get(userId);
+  if (!pending) {
+    return undefined;
+  }
+  if (!isExpired(pending)) {
+    return pending;
+  }
+  pendingListings.delete(userId);
+  return undefined;
+}
+
+function startPendingCleanup(): void {
+  const cleanupTimer = setInterval(() => {
+    for (const [userId, pending] of pendingListings.entries()) {
+      if (isExpired(pending)) {
+        pendingListings.delete(userId);
+      }
+    }
+  }, Math.min(Math.max(Math.floor(PENDING_LISTING_TTL_MS / 2), 60_000), 5 * 60_000));
+
+  cleanupTimer.unref();
+}
+
+async function safeEditOrReply(ctx: Context, message: string): Promise<void> {
+  try {
+    await ctx.editMessageText(message);
+  } catch {
+    await ctx.reply(message);
+  }
+}
+
+bot.command('start', async (ctx) => {
+  await ctx.reply(
     `🚗 Welcome to AutoFlow Ethiopia!\n\n` +
-    `Send the messy car text first.\n` +
-    `Then send the photos.`
+      `Send the messy car text first.\n` +
+      `Then send the photos.`,
   );
 });
 
 bot.command('status', async (ctx) => {
-  const { count } = await supabase.from('listings').select('*', { count: 'exact', head: true });
-  ctx.reply(`✅ Bot running\nListings: ${count || 0}`);
+  try {
+    const { count, error } = await supabase.from('listings').select('*', { count: 'exact', head: true });
+    if (error) {
+      throw new Error(error.message);
+    }
+    await ctx.reply(`✅ Bot running\nListings: ${count ?? 0}`);
+  } catch (error) {
+    await ctx.reply(`❌ Status error: ${toErrorMessage(error)}`);
+  }
 });
 
-// ──────────────────────────────────────────────
 // STEP 1: User sends messy TEXT
 bot.on('message:text', async (ctx: Context) => {
-  if (ctx.message.text?.startsWith('/')) return;
-
-  const userId = ctx.from!.id;
-  const pending = pendingListings.get(userId);
-
-  // Prevent sending text again while waiting for photos
-  if (pending && pending.photos.length === 0) {
-    return ctx.reply('📸 Please send the car photos now (you can send multiple).');
+  const messageText = ctx.message?.text;
+  if (!messageText || messageText.startsWith('/')) {
+    return;
   }
 
-  const rawText = ctx.message.text;
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  if (!userId || !chatId) {
+    return;
+  }
+
+  const pending = getPendingListing(userId);
+  if (pending && pending.photos.length === 0) {
+    await ctx.reply('📸 Please send the car photos now (you can send multiple).');
+    return;
+  }
 
   await ctx.reply('🔄 Creating beautiful listing...');
 
   try {
-    const result = await extractCarData(rawText);
+    const extracted = await extractCarData(messageText);
 
     pendingListings.set(userId, {
       userId,
-      chatId: ctx.chat!.id,
-      rawText,
-      extracted: result,
+      chatId,
+      rawText: messageText,
+      extracted,
       photos: [],
+      createdAt: Date.now(),
     });
 
-    await ctx.reply(result.formatted_post, { parse_mode: 'HTML' });
-
-    await ctx.reply(
-      `📸 Now send the car photos.\nYou can send multiple photos in one message.`
-    );
-  } catch (err: any) {
-    console.error(err);
-    await ctx.reply(`❌ Error: ${err.message}`);
+    await ctx.reply(extracted.formatted_post, { parse_mode: 'HTML' });
+    await ctx.reply(`📸 Now send the car photos.\nYou can send multiple photos in one message.`);
+  } catch (error) {
+    console.error('Failed to extract car data', error);
+    await ctx.reply(`❌ Error: ${toErrorMessage(error)}`);
   }
 });
 
-// ──────────────────────────────────────────────
 // STEP 2: User sends PHOTOS
 bot.on('message:photo', async (ctx: Context) => {
-  const userId = ctx.from!.id;
-  const pending = pendingListings.get(userId);
+  const userId = ctx.from?.id;
+  if (!userId) {
+    return;
+  }
 
-  if (!pending) return ctx.reply('Please send the car text first.');
+  const pending = getPendingListing(userId);
+  if (!pending) {
+    await ctx.reply('Please send the car text first.');
+    return;
+  }
 
-  // Show uploading message only once
   if (pending.photos.length === 0) {
     await ctx.reply('📸 Uploading & watermarking photos...');
   }
 
   try {
-    const photos: string[] = [];
-    const photoArray = ctx.message.photo || [];
-    const biggestPhoto = photoArray.at(-1)!;
+    const biggestPhoto = ctx.message?.photo?.at(-1);
+    if (!biggestPhoto) {
+      throw new Error('Photo payload is missing');
+    }
 
     const file = await ctx.api.getFile(biggestPhoto.file_id);
-    const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
+    if (!file.file_path) {
+      throw new Error('Could not resolve Telegram photo path');
+    }
+
+    const fileUrl = `${TELEGRAM_FILE_BASE_URL}/${file.file_path}`;
     const watermarkedUrl = await uploadToCloudinary(fileUrl);
-    photos.push(watermarkedUrl);
+    pending.photos.push(watermarkedUrl);
 
-    pending.photos = [...pending.photos, ...photos];
-
-    // Show Confirm & Post button only after first photo
     if (pending.photos.length === 1) {
-      const keyboard = new InlineKeyboard()
-        .text('✅ Confirm & Post', `confirm:${userId}`);
-
+      const keyboard = new InlineKeyboard().text('✅ Confirm & Post', `confirm:${userId}`);
       await ctx.reply(
         `🎉 Photos are ready!\n\nClick the button below to post the beautiful listing to the channel.`,
-        { reply_markup: keyboard }
+        { reply_markup: keyboard },
       );
     }
-  } catch (err: any) {
-    await ctx.reply(`❌ Photo error: ${err.message}`);
+  } catch (error) {
+    console.error('Failed to process photo', error);
+    await ctx.reply(`❌ Photo error: ${toErrorMessage(error)}`);
   }
 });
 
-// ──────────────────────────────────────────────
 // CONFIRM & POST
-bot.callbackQuery(/confirm:(.+)/, async (ctx) => {
-  const userId = Number(ctx.match[1]);
-  const pending = pendingListings.get(userId);
+bot.callbackQuery(/confirm:(\d+)/, async (ctx) => {
+  const ownerUserId = Number(ctx.match[1]);
+  const actorUserId = ctx.from?.id;
 
+  if (!Number.isInteger(ownerUserId)) {
+    await ctx.answerCallbackQuery('Invalid listing');
+    return;
+  }
+
+  if (!actorUserId || actorUserId !== ownerUserId) {
+    await ctx.answerCallbackQuery('Only the listing owner can post this.');
+    return;
+  }
+
+  const pending = getPendingListing(ownerUserId);
   if (!pending || pending.photos.length === 0) {
-    return ctx.answerCallbackQuery('Please upload photos first!');
+    await ctx.answerCallbackQuery('Please upload photos first!');
+    return;
   }
 
   await ctx.answerCallbackQuery('Posting beautiful listing...');
 
-  let finalPost = pending.extracted.formatted_post;
+  const finalPost = `${pending.extracted.formatted_post}\n\n🌐 <a href="${TMA_URL}">View Full Showroom</a>`;
 
-  // Add the View Full Showroom link with your deployed TMA URL
-  finalPost += `\n\n🌐 <a href="${TMA_URL}">View Full Showroom</a>`;
+  try {
+    const sentMessages = await bot.api.sendMediaGroup(
+      CHANNEL_ID,
+      pending.photos.map((url, index) => ({
+        type: 'photo' as const,
+        media: url,
+        caption: index === 0 ? finalPost : undefined,
+        parse_mode: 'HTML' as const,
+      })),
+    );
 
-  const sentMessage = await bot.api.sendMediaGroup(
-    CHANNEL_ID,
-    pending.photos.map((url, i) => ({
-      type: 'photo',
-      media: url,
-      caption: i === 0 ? finalPost : undefined,
-      parse_mode: 'HTML',
-    }))
-  );
+    const firstMessage = sentMessages[0];
+    if (!firstMessage) {
+      throw new Error('Telegram did not return posted messages');
+    }
 
-  const messageId = sentMessage[0].message_id;
+    const { error } = await supabase.from('listings').insert({
+      status: 'posted',
+      telegram_message_id: firstMessage.message_id.toString(),
+      telegram_chat_id: CHANNEL_ID,
+      ...pending.extracted,
+      photos: pending.photos,
+    });
 
-  await supabase.from('listings').insert({
-    status: 'posted',
-    telegram_message_id: messageId.toString(),
-    telegram_chat_id: CHANNEL_ID,
-    ...pending.extracted,
-    photos: pending.photos,
-  });
+    if (error) {
+      throw new Error(`Failed to save listing: ${error.message}`);
+    }
 
-  await ctx.editMessageText('✅ Beautiful listing posted to channel! 🎉');
-  pendingListings.delete(userId);
+    pendingListings.delete(ownerUserId);
+    await safeEditOrReply(ctx, '✅ Beautiful listing posted to channel! 🎉');
+  } catch (error) {
+    console.error('Failed to confirm and post listing', error);
+    await safeEditOrReply(ctx, `❌ Failed to post listing: ${toErrorMessage(error)}`);
+  }
 });
+
+bot.catch((error) => {
+  console.error('Unhandled bot error', error);
+});
+
+startPendingCleanup();
 
 export default bot;

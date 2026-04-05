@@ -1,39 +1,42 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '../../../lib/supabase';
+import { getListingById, updateListingById } from '@/lib/server/listings';
+import { extractListingId, jsonError, parseJsonBody } from '@/lib/server/http';
+import { markListingAsSoldCaption } from '@/lib/server/telegram';
+import { isAuthorizedAdminRequest } from '@/lib/server/auth';
 
-const BOT_TOKEN = process.env.BOT_TOKEN!;
-const CHANNEL_ID = Number(process.env.CHANNEL_ID!);
+function buildSoldCaption(brand: string, model: string, year: number, price: number): string {
+  return `❌ SOLD - ${brand} ${model} ${year}\n💰 ${Number(price).toLocaleString()} ETB`;
+}
 
-export async function POST(req: Request) {
-  const { listingId } = await req.json();
-
-  const { data: listing } = await supabase
-    .from('listings')
-    .select('*')
-    .eq('id', listingId)
-    .single();
-
-  if (!listing || !listing.telegram_message_id) {
-    return NextResponse.json({ error: 'Listing not found' }, { status: 404 });
+export async function POST(request: Request) {
+  if (!isAuthorizedAdminRequest(request)) {
+    return jsonError('Unauthorized', 403);
   }
 
-  // Edit original channel message
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageCaption`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: CHANNEL_ID,
-      message_id: Number(listing.telegram_message_id),
-      caption: `❌ SOLD - ${listing.brand} ${listing.model} ${listing.year}\n💰 ${Number(listing.price).toLocaleString()} ETB`,
-      parse_mode: 'HTML',
-    }),
-  });
+  try {
+    const payload = await parseJsonBody(request);
+    const listingId = extractListingId(payload);
+    if (!listingId) {
+      return jsonError('listingId is required', 400);
+    }
 
-  // Update DB
-  await supabase
-    .from('listings')
-    .update({ status: 'sold' })
-    .eq('id', listingId);
+    const listing = await getListingById(listingId);
+    if (!listing || !listing.telegram_message_id) {
+      return jsonError('Listing not found', 404);
+    }
 
-  return NextResponse.json({ success: true });
+    const messageId = Number(listing.telegram_message_id);
+    if (!Number.isInteger(messageId)) {
+      return jsonError('Listing has invalid telegram message id', 422);
+    }
+
+    const caption = buildSoldCaption(listing.brand, listing.model, listing.year, listing.price);
+    await markListingAsSoldCaption(messageId, caption);
+    await updateListingById(listingId, { status: 'sold' });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Sold route failed', error);
+    return jsonError(error instanceof Error ? error.message : 'Failed to mark listing as sold', 500);
+  }
 }
