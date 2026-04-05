@@ -34,19 +34,22 @@ useEffect(() => {
     if (typeof window === 'undefined' || !window.Telegram?.WebApp) return;
 
     const webApp = window.Telegram.WebApp;
-
     webApp.ready();
     webApp.expand();
     webApp.setHeaderColor('#111827');
 
-    // Small delay to ensure initDataUnsafe is populated
+    // Debug: Show what Telegram sees
+    console.log("Telegram initDataUnsafe:", webApp.initDataUnsafe);
+    setDebugInfo(`User ID from Telegram: ${webApp.initDataUnsafe?.user?.id || 'Not found'}`);
+
+    // Give Telegram time to fill initDataUnsafe
     setTimeout(() => {
-      if (webApp.initDataUnsafe?.user?.id === ADMIN_USER_ID) {
+      const userId = webApp.initDataUnsafe?.user?.id;
+      if (userId === ADMIN_USER_ID) {
         setIsAdmin(true);
-        // Auto switch to admin tab for you
-        setActiveTab('admin');
+        setActiveTab('admin');           // Auto open admin for you
       }
-    }, 300);
+    }, 800);
   }, []);
 
   const fetchListings = async () => {
