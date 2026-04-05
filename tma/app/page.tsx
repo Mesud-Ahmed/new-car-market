@@ -18,7 +18,7 @@ interface CarListing {
   formatted_post?: string;
 }
 
-const ADMIN_USER_ID = 5040963728; 
+const ADMIN_USER_ID = 5040963728; // ← Your Telegram User ID
 
 export default function AutoFlowTMA() {
   const [activeTab, setActiveTab] = useState<'buyer' | 'admin'>('buyer');
@@ -29,8 +29,8 @@ export default function AutoFlowTMA() {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Telegram Mini App initialization
-useEffect(() => {
+  // Telegram Mini App + Admin Detection
+  useEffect(() => {
     if (typeof window === 'undefined' || !window.Telegram?.WebApp) return;
 
     const webApp = window.Telegram.WebApp;
@@ -38,18 +38,13 @@ useEffect(() => {
     webApp.expand();
     webApp.setHeaderColor('#111827');
 
-    // Debug: Show what Telegram sees
-    console.log("Telegram initDataUnsafe:", webApp.initDataUnsafe);
-    setDebugInfo(`User ID from Telegram: ${webApp.initDataUnsafe?.user?.id || 'Not found'}`);
-
-    // Give Telegram time to fill initDataUnsafe
+    // Check admin with small delay (Telegram needs time to load initDataUnsafe)
     setTimeout(() => {
-      const userId = webApp.initDataUnsafe?.user?.id;
-      if (userId === ADMIN_USER_ID) {
+      if (webApp.initDataUnsafe?.user?.id === ADMIN_USER_ID) {
         setIsAdmin(true);
-        setActiveTab('admin');           // Auto open admin for you
+        setActiveTab('admin');        // Auto open Admin tab for you
       }
-    }, 800);
+    }, 600);
   }, []);
 
   const fetchListings = async () => {
@@ -62,7 +57,6 @@ useEffect(() => {
     setLoading(false);
   };
 
-  // Real-time subscription (fixed cleanup)
   useEffect(() => {
     fetchListings();
 
@@ -71,7 +65,6 @@ useEffect(() => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'listings' }, fetchListings)
       .subscribe();
 
-    // Cleanup must be synchronous
     return () => {
       supabase.removeChannel(channel);
     };
@@ -83,9 +76,7 @@ useEffect(() => {
     return priceMatch && fuelMatch;
   });
 
-  const callDealer = () => {
-    window.location.href = 'tel:+251911461574';
-  };
+  const callDealer = () => window.location.href = 'tel:+251911461574';
 
   const handleSold = async (id: string) => {
     setProcessingId(id);
@@ -224,7 +215,7 @@ useEffect(() => {
         </div>
       )}
 
-      {/* ADMIN VIEW */}
+      {/* ADMIN VIEW - Only for you */}
       {activeTab === 'admin' && isAdmin && (
         <div className="p-4 max-w-2xl mx-auto">
           <div className="flex items-center gap-3 mb-6">
@@ -237,9 +228,7 @@ useEffect(() => {
             <div className="space-y-4">
               {listings.map((car) => (
                 <div key={car.id} className="flex gap-4 bg-gray-800 rounded-2xl p-4">
-                  {car.photos?.[0] && (
-                    <img src={car.photos[0]} className="w-20 h-20 object-cover rounded-xl" />
-                  )}
+                  {car.photos?.[0] && <img src={car.photos[0]} className="w-20 h-20 object-cover rounded-xl" />}
                   <div className="flex-1">
                     <h3 className="font-bold">{car.brand} {car.model} {car.year}</h3>
                     <p className="text-emerald-400">{Number(car.price).toLocaleString()} ETB</p>
@@ -250,27 +239,14 @@ useEffect(() => {
                         disabled={processingId === car.id}
                         className="bg-red-600 hover:bg-red-700 py-3 rounded-2xl text-white flex items-center justify-center gap-2 disabled:opacity-50"
                       >
-                        {processingId === car.id ? (
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                        ) : (
-                          <>
-                            <XCircle className="w-5 h-5" /> SOLD
-                          </>
-                        )}
+                        {processingId === car.id ? <Loader2 className="w-5 h-5 animate-spin" /> : <> <XCircle className="w-5 h-5" /> SOLD </>}
                       </button>
-
                       <button
                         onClick={() => handleBump(car.id)}
                         disabled={processingId === car.id}
                         className="bg-amber-600 hover:bg-amber-700 py-3 rounded-2xl text-white flex items-center justify-center gap-2 disabled:opacity-50"
                       >
-                        {processingId === car.id ? (
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                        ) : (
-                          <>
-                            <RefreshCw className="w-5 h-5" /> Bump
-                          </>
-                        )}
+                        {processingId === car.id ? <Loader2 className="w-5 h-5 animate-spin" /> : <> <RefreshCw className="w-5 h-5" /> Bump </>}
                       </button>
                     </div>
                   </div>
