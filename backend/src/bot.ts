@@ -7,6 +7,8 @@ import { pendingListings } from './types';
 const bot = new Bot(process.env.BOT_TOKEN!);
 const CHANNEL_ID = Number(process.env.CHANNEL_ID!);
 
+const TMA_URL = 'https://new-car-market-vl8v.vercel.app/';   // ← Your deployed TMA
+
 bot.command('start', (ctx) => {
   ctx.reply(
     `🚗 Welcome to AutoFlow Ethiopia!\n\n` +
@@ -28,9 +30,9 @@ bot.on('message:text', async (ctx: Context) => {
   const userId = ctx.from!.id;
   const pending = pendingListings.get(userId);
 
-  // Prevent sending text while in photo stage
+  // Prevent sending text again while waiting for photos
   if (pending && pending.photos.length === 0) {
-    return ctx.reply('📸 Please send the car photos now.');
+    return ctx.reply('📸 Please send the car photos now (you can send multiple).');
   }
 
   const rawText = ctx.message.text;
@@ -50,7 +52,9 @@ bot.on('message:text', async (ctx: Context) => {
 
     await ctx.reply(result.formatted_post, { parse_mode: 'HTML' });
 
-    await ctx.reply(`📸 Now send the car photos.\nYou can send multiple in one message.`);
+    await ctx.reply(
+      `📸 Now send the car photos.\nYou can send multiple photos in one message.`
+    );
   } catch (err: any) {
     console.error(err);
     await ctx.reply(`❌ Error: ${err.message}`);
@@ -82,16 +86,13 @@ bot.on('message:photo', async (ctx: Context) => {
 
     pending.photos = [...pending.photos, ...photos];
 
-    // Short confirmation for every photo
-    await ctx.reply(`✅ Photo added (${pending.photos.length} total)`);
-
-    // Show Confirm & Post button ONLY ONCE (after first photo)
+    // Show Confirm & Post button only after first photo
     if (pending.photos.length === 1) {
       const keyboard = new InlineKeyboard()
         .text('✅ Confirm & Post', `confirm:${userId}`);
 
       await ctx.reply(
-        `🎉 All photos ready!\n\nClick the button below to post the beautiful listing to the channel.`,
+        `🎉 Photos are ready!\n\nClick the button below to post the beautiful listing to the channel.`,
         { reply_markup: keyboard }
       );
     }
@@ -113,7 +114,9 @@ bot.callbackQuery(/confirm:(.+)/, async (ctx) => {
   await ctx.answerCallbackQuery('Posting beautiful listing...');
 
   let finalPost = pending.extracted.formatted_post;
-  finalPost += `\n\n🌐 <a href="https://t.me/FreedomeCarMarketBot/app">View Full Showroom</a>`;
+
+  // Add the View Full Showroom link with your deployed TMA URL
+  finalPost += `\n\n🌐 <a href="${TMA_URL}">View Full Showroom</a>`;
 
   const sentMessage = await bot.api.sendMediaGroup(
     CHANNEL_ID,
