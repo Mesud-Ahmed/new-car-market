@@ -1,5 +1,3 @@
-import type { ExtractedCarData } from './validation';
-
 export type ListingStatus = 'pending' | 'posted' | 'sold';
 
 export interface CarListing {
@@ -26,15 +24,3 @@ export interface CarListing {
   created_at?: string;
   updated_at?: string;
 }
-
-export interface PendingListing {
-  userId: number;
-  chatId: number;
-  rawText: string;
-  extracted: ExtractedCarData;
-  photos: string[];
-  createdAt: number;
-}
-
-// Temporary storage for the new flow
-export const pendingListings = new Map<number, PendingListing>();

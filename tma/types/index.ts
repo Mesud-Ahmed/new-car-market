@@ -17,6 +17,7 @@ export interface CarListing {
   condition?: string | null;
   description?: string | null;
   formatted_post?: string | null;
+  extracted_data?: Record<string, unknown> | null;
   photos: string[];
   created_at?: string;
   updated_at?: string;
